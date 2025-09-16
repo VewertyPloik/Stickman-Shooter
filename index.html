@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>Stickman Shooter</title>
+<style>
+body{margin:0;background:#222;overflow:hidden;font-family:sans-serif;}
+canvas{display:block;margin:0 auto;background:linear-gradient(to top,#555,#111);}
+#shop{position:absolute;top:10px;right:10px;background:#333;padding:10px;border-radius:8px;color:white;font-size:14px;max-width:200px;}
+#shop button{display:block;margin:5px 0;width:100%;padding:5px;border:none;border-radius:6px;background:#555;color:white;cursor:pointer;}
+#shop button:disabled{background:#222;color:#777;cursor:not-allowed;}
+#shopHeader{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;}
+#shopToggle{position:absolute;top:10px;left:10px;padding:5px 10px;border:none;border-radius:6px;background:#333;color:white;cursor:pointer;}
+#playAgain{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#333;color:white;font-size:24px;padding:15px 30px;border:none;border-radius:10px;display:none;cursor:pointer;}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<button id="shopToggle">Shop</button>
+
+<div id="shop">
+  <div id="shopHeader">
+    <b>Shop</b>
+    <button id="closeShop">X</button>
+  </div>
+  <div>Coins: <span id="coinsDisplay">0</span></div>
+  <div><b>Bullets</b></div>
+  <button id="buyOrange">Orange Bullets (3 dmg) - 100 coins</button>
+  <button id="buyPurple">Purple Bullets (5 dmg) - 300 coins</button>
+  <div><b>Health Upgrades</b></div>
+  <button id="buyHP100">HP 15 - 100 coins</button>
+  <button id="buyHP250">HP 20 - 250 coins</button>
+  <button id="buyHP500">HP 25 - 500 coins</button>
+  <button id="buyHP1000">HP 30 - 1000 coins</button>
+  <button id="buyHP1500">HP 35 - 1500 coins</button>
+  <button id="buyHP2000">HP 40 - 2000 coins</button>
+  <button id="buyHP2500">HP 45 - 2500 coins</button>
+  <button id="buyHP3000">HP 50 - 3000 coins</button>
+</div>
+
+<button id="playAgain">Play Again</button>
+
+<script>
+const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
+canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+
+let player,enemies,kills,coins,highScore,currentBullet,dragging,startX,startY,power,angle;
+let playerMaxHP;
+let buildings=[];
+const coinDisplay=document.getElementById("coinsDisplay");
+const btnOrange=document.getElementById("buyOrange");
+const btnPurple=document.getElementById("buyPurple");
+const btnPlay=document.getElementById("playAgain");
+const btnHP100=document.getElementById("buyHP100");
+const btnHP250=document.getElementById("buyHP250");
+const btnHP500=document.getElementById("buyHP500");
+const btnHP1000=document.getElementById("buyHP1000");
+const btnHP1500=document.getElementById("buyHP1500");
+const btnHP2000=document.getElementById("buyHP2000");
+const btnHP2500=document.getElementById("buyHP2500");
+const btnHP3000=document.getElementById("buyHP3000");
+const shopDiv=document.getElementById("shop");
+const shopToggle=document.getElementById("shopToggle");
+const closeShop=document.getElementById("closeShop");
+
+// Load saved data
+coins=parseInt(localStorage.getItem("stickmanCoins")||"0");
+currentBullet=localStorage.getItem("stickmanBullet")||"yellow";
+highScore=parseInt(localStorage.getItem("stickmanHighScore")||"0");
+playerMaxHP=parseInt(localStorage.getItem("stickmanMaxHP")||"10");
+
+// Reset game
+function resetGame(){
+  player={x:100,y:canvas.height-200,hp:playerMaxHP,bullets:[],alive:true,ragdoll:false};
+  enemies=[]; kills=0; dragging=false; power=0; btnPlay.style.display="none";
+  updateShopDisplay(); updateHPShop();
+}
+resetGame();
+
+// Buildings
+for(let i=0;i<6;i++){
+  let bx=canvas.width/2 + i*100;
+  buildings.push({x:bx,y:canvas.height-150,w:100,h:150});
+}
+
+// Spawn enemy
+function spawnEnemy(){
+  if(!player.alive) return;
+  let type="normal";
+  if(kills>=15 && Math.random()<0.15) type="witch";
+  else if(kills>=10 && Math.random()<0.25) type="wizard";
+  else if(kills>=5 && Math.random()<0.2) type="boss";
+
+  let possibleBuildings = buildings.filter(b => b.x > player.x + 50 && b.x + b.w < canvas.width - 50);
+  if(possibleBuildings.length===0) return;
+  let b = possibleBuildings[Math.floor(Math.random()*possibleBuildings.length)];
+
+  if(type==="boss"){ enemies.push({x:b.x+b.w/2,y:b.y,hp:45,maxHp:45,type:"boss",dmg:2,bullets:[],alive:true,ragdoll:false,spin:0,shrink:1}); }
+  else if(type==="wizard"){ enemies.push({x:b.x+b.w/2,y:b.y,hp:30,maxHp:30,type:"wizard",dmg:5,bullets:[],alive:true,ragdoll:false,spin:0,shrink:1}); }
+  else if(type==="witch"){ enemies.push({x:b.x+b.w/2,y:b.y,hp:20,maxHp:20,type:"witch",dmg:5,bullets:[],alive:true,ragdoll:false,spin:0,shrink:1}); }
+  else{ enemies.push({x:b.x+b.w/2,y:b.y,hp:5,maxHp:5,type:"normal",dmg:1,bullets:[],alive:true,ragdoll:false,spin:0,shrink:1}); }
+}
+setInterval(spawnEnemy,2200);
+
+// Controls
+canvas.addEventListener("mousedown",e=>{ if(player.alive){ dragging=true; startX=e.clientX; startY=e.clientY; }});
+canvas.addEventListener("mousemove",e=>{ if(dragging){ let dx=startX-e.clientX,dy=startY-e.clientY; power=Math.min(Math.sqrt(dx*dx+dy*dy),140); angle=Math.atan2(dy,dx); }});
+canvas.addEventListener("mouseup",()=>{ if(dragging){ shoot(); } dragging=false; power=0; });
+canvas.addEventListener("touchstart",e=>{ let t=e.touches[0]; if(player.alive){ dragging=true; startX=t.clientX; startY=t.clientY; }});
+canvas.addEventListener("touchmove",e=>{ let t=e.touches[0]; if(dragging){ let dx=startX-t.clientX,dy=startY-t.clientY; power=Math.min(Math.sqrt(dx*dx+dy*dy),140); angle=Math.atan2(dy,dx); }});
+canvas.addEventListener("touchend",()=>{ if(dragging){ shoot(); } dragging=false; power=0; });
+
+// Player shoot
+function shoot(){
+  let dmg=1,color="yellow"; 
+  if(currentBullet==="orange"){ dmg=3;color="orange"; }
+  if(currentBullet==="purple"){ dmg=5;color="purple"; }
+  let speed = power*0.3;
+  player.bullets.push({x:player.x,y:player.y,vx:-Math.cos(angle)*speed,vy:-Math.sin(angle)*speed,dmg,color});
+}
+
+// Shop toggle
+shopToggle.onclick=()=>{ shopDiv.style.display = shopDiv.style.display==="none"?"block":"none"; };
+closeShop.onclick=()=>{ shopDiv.style.display="none"; };
+
+// Shop
+function updateShopDisplay(){
+  coinDisplay.textContent=coins;
+  btnOrange.disabled=coins<100;
+  btnPurple.disabled=coins<300;
+}
+function updateHPShop(){
+  btnHP100.disabled = coins<100 || playerMaxHP>=15;
+  btnHP250.disabled = coins<250 || playerMaxHP>=20;
+  btnHP500.disabled = coins<500 || playerMaxHP>=25;
+  btnHP1000.disabled = coins<1000 || playerMaxHP>=30;
+  btnHP1500.disabled = coins<1500 || playerMaxHP>=35;
+  btnHP2000.disabled = coins<2000 || playerMaxHP>=40;
+  btnHP2500.disabled = coins<2500 || playerMaxHP>=45;
+  btnHP3000.disabled = coins<3000 || playerMaxHP>=50;
+}
+
+// Bullet upgrades
+btnOrange.onclick=()=>{ if(coins>=100){coins-=100;currentBullet="orange"; saveShop(); updateShopDisplay();} };
+btnPurple.onclick=()=>{ if(coins>=300){coins-=300;currentBullet="purple"; saveShop(); updateShopDisplay();} };
+
+// HP upgrades
+btnHP100.onclick=()=>{ buyHP(100,15); };
+btnHP250.onclick=()=>{ buyHP(250,20); };
+btnHP500.onclick=()=>{ buyHP(500,25); };
+btnHP1000.onclick=()=>{ buyHP(1000,30); };
+btnHP1500.onclick=()=>{ buyHP(1500,35); };
+btnHP2000.onclick=()=>{ buyHP(2000,40); };
+btnHP2500.onclick=()=>{ buyHP(2500,45); };
+btnHP3000.onclick=()=>{ buyHP(3000,50); };
+
+function buyHP(cost,newHP){
+  if(coins>=cost && playerMaxHP<newHP){
+    coins -= cost;
+    playerMaxHP=newHP;
+    player.hp=playerMaxHP;
+    localStorage.setItem("stickmanCoins",coins);
+    localStorage.setItem("stickmanMaxHP",playerMaxHP);
+    updateShopDisplay();
+    updateHPShop();
+  }
+}
+
+function saveShop(){ localStorage.setItem("stickmanCoins",coins); localStorage.setItem("stickmanBullet",currentBullet); }
+
+// Accuracy scaling
+function getAccuracy(){ if(kills<=5)return 0.2; if(kills<=10)return 0.4; if(kills<=24)return 0.75; return 0.85; }
+
+// Game update
+function update(){
+  if(!player.alive) return;
+  player.bullets.forEach(b=>{ b.x+=b.vx; b.y+=b.vy; b.vy+=0.25; });
+  player.bullets=player.bullets.filter(b=>b.y<canvas.height && b.x<canvas.width);
+
+  enemies.forEach(en=>{ 
+    en.bullets.forEach(b=>{ b.x+=b.vx; b.y+=b.vy; }); 
+    en.bullets=en.bullets.filter(b=>b.y<canvas.height && b.x>0); 
+  });
+
+  // Enemy shooting
+  enemies.forEach(en=>{
+    if(!en.alive) return;
+    if(Math.random()<0.02){
+      let acc=getAccuracy(), dx=player.x-en.x, dy=player.y-en.y;
+      let ang=Math.atan2(dy,dx); ang+=(Math.random()-0.5)*(1-acc)*1.2;
+      let sp=6,color="darkred",dmg=en.dmg;
+      if(en.type==="wizard"||en.type==="witch"){ sp=3;color="pink"; }
+      en.bullets.push({x:en.x,y:en.y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,dmg,color});
+    }
+  });
+
+  // Collisions
+  player.bullets.forEach(b=>{
+    enemies.forEach(en=>{
+      let size=en.type==="boss"?2:1;
+      if(en.alive && Math.abs(b.x-en.x)<20*size && Math.abs(b.y-en.y)<40*size){
+        en.hp-=b.dmg;b.hit=true;
+        if(en.hp<=0){ 
+          en.alive=false; en.ragdoll=true; kills++;
+          if(en.type==="boss") coins+=25;
+          else if(en.type==="wizard") coins+=15;
+          else if(en.type==="witch") coins+=20;
+          else coins+=5;
+          saveShop();
+          updateShopDisplay(); updateHPShop();
+        }
+      }
+    });
+  });
+  player.bullets=player.bullets.filter(b=>!b.hit);
+
+  enemies.forEach(en=>{
+    en.bullets.forEach(b=>{
+      if(player.alive && Math.abs(b.x-player.x)<20 && Math.abs(b.y-player.y)<40){
+        player.hp-=b.dmg;b.hit=true;
+        if(player.hp<=0){ player.alive=false; player.ragdoll=true; btnPlay.style.display="block"; }
+      }
+    });
+    en.bullets=en.bullets.filter(b=>!b.hit);
+  });
+
+  // Ragdoll spin+shrink
+  enemies.forEach(en=>{ if(en.ragdoll){ en.spin+=(Math.random()*0.2+0.1); en.shrink-=0.01; if(en.shrink<=0) en.remove=true; } });
+  enemies=enemies.filter(en=>!en.remove);
+
+  if(kills>highScore){ highScore=kills; localStorage.setItem("stickmanHighScore",highScore); }
+}
+
+// Draw stickman
+function drawStickman(en){
+  ctx.save(); ctx.translate(en.x,en.y);
+  if(en.ragdoll){ ctx.rotate(en.spin); ctx.scale(en.shrink,en.shrink); }
+  let size=en.type==="boss"?2:1;
+  ctx.strokeStyle=(en.type==="wizard"?"lightblue":en.type==="witch"?"pink":"red");
+  ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(0,-30*size,10*size,0,Math.PI*2);ctx.stroke();
+  if(en.type==="wizard"){ ctx.fillStyle="blue"; ctx.beginPath(); ctx.moveTo(-10*size,-40*size); ctx.lineTo(0,-60*size); ctx.lineTo(10*size,-40*size); ctx.closePath(); ctx.fill(); }
+  if(en.type==="witch"){ ctx.fillStyle="purple"; ctx.beginPath(); ctx.moveTo(-10*size,-40*size); ctx.lineTo(0,-60*size); ctx.lineTo(10*size,-40*size); ctx.closePath(); ctx.fill(); }
+  ctx.beginPath();ctx.moveTo(0,-20*size);ctx.lineTo(0,20*size);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-10*size);ctx.lineTo(-15*size,10*size);
+  ctx.moveTo(0,-10*size);ctx.lineTo(15*size,10*size);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,20*size);ctx.lineTo(-15*size,50*size);
+  ctx.moveTo(0,20*size);ctx.lineTo(15*size,50*size);ctx.stroke();
+  if(en.alive){ ctx.fillStyle="red"; ctx.fillRect(-20*size,55*size,40*size,5*size); ctx.fillStyle="lime"; ctx.fillRect(-20*size,55*size,40*size*(en.hp/en.maxHp),5*size); }
+  ctx.restore();
+}
+
+// Draw game
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  buildings.forEach(b=>ctx.fillRect(b.x,b.y,b.w,b.h));
+
+  // Player
+  ctx.strokeStyle="lime";ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(player.x,player.y-30,10,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(player.x,player.y-20);ctx.lineTo(player.x,player.y+20);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(player.x,player.y-10);ctx.lineTo(player.x-15,player.y+10);
+  ctx.moveTo(player.x,player.y-10);ctx.lineTo(player.x+15,player.y+10);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(player.x,player.y+20);ctx.lineTo(player.x-15,player.y+50);
+  ctx.moveTo(player.x,player.y+20);ctx.lineTo(player.x+15,player.y+50);ctx.stroke();
+  ctx.fillStyle="red";ctx.fillRect(player.x-20,player.y+50,40,5);
+  ctx.fillStyle="lime";ctx.fillRect(player.x-20,player.y+50,40*(player.hp/playerMaxHP),5);
+
+  enemies.forEach(drawStickman);
+
+  // Bullets
+  player.bullets.forEach(b=>{ ctx.fillStyle=b.color; ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill(); });
+  enemies.forEach(en=>{ en.bullets.forEach(b=>{ ctx.fillStyle=b.color||"darkred"; ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill(); }); });
+
+  ctx.fillStyle="white";ctx.font="24px sans-serif";
+  ctx.fillText("Kills: "+kills,20,30);
+  ctx.fillText("High Score: "+highScore,20,60);
+}
+
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+loop();
+
+btnPlay.onclick=()=>{ resetGame(); };
+</script>
+</body>
+</html>
